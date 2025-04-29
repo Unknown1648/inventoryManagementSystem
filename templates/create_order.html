@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Order</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #063f29;
+            padding: 40px 20px;
+            margin: 0;
+            display: flex;
+            justify-content: flex-start;
+            align-items: flex-start;
+        }
+
+        .order-container {
+            background-color:#F5F5F5;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+            max-width: 800px;
+            margin-right: 20px;
+            flex: 1; /* Ensure it takes available space */
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 30px;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .order-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .order-header p {
+            font-size: 16px;
+            color: #007bff;
+        }
+
+        .order-form {
+            margin-top: 20px;
+        }
+
+        label {
+            font-weight: bold;
+            margin-bottom: 5px;
+            display: block;
+        }
+
+        select, input[type="text"], input[type="date"], input[type="number"] {
+            width: 100%;
+            padding: 8px;
+            margin: 6px 0 12px 0;
+            box-sizing: border-box;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+
+        .order-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .order-table th, .order-table td {
+            padding: 12px;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+
+        .order-table th {
+            background-color: #f4f4f4;
+        }
+
+        .delete-icon {
+            cursor: pointer;
+            color: red;
+            font-weight: bold;
+        }
+
+        .order-summary {
+            margin-top: 20px;
+        }
+
+        .order-summary td {
+            padding: 10px;
+            font-size: 16px;
+        }
+
+        .btn {
+            padding: 12px 25px;
+            font-size: 16px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin-top: 20px;
+            width: 100%;
+        }
+
+        .btn:hover {
+            background-color: #2980b9;
+        }
+
+        .btn:disabled {
+            background-color: #bbb;
+            cursor: not-allowed;
+        }
+
+        /* Product List Styling */
+        #product-list {
+            display: none;
+            position: absolute;
+            top: 100px; /* Adjust this value based on where you want it vertically */
+            right: 20px; /* Position it on the right side */
+            background-color: white;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
+            max-height: 200px;
+            overflow-y: auto;
+            width: 250px; /* Adjust the width as necessary */
+            z-index: 9999;
+            border-radius: 5px;
+        }
+
+        #product-list li {
+            padding: 8px;
+            cursor: pointer;
+            border-bottom: 1px solid #ddd;
+        }
+
+        #product-list li:hover {
+            background-color: #f0f0f0;
+        }
+
+        .dashboard-link {
+            font-size: 16px;
+            color: #007bff;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    {% if error %}
+    <div style="background-color: #f8d7da; padding: 15px; margin-bottom: 20px; border-radius: 5px; color: #721c24; border: 1px solid #f5c6cb;">
+        <strong>Order Error:</strong><br>
+        <pre style="margin: 0;">{{ error }}</pre>
+    </div>
+    {% endif %}
+
+    <div class="order-container">
+        <div class="order-header">
+            <h1>Create Order</h1>
+            <a href="{{ url_for('dashboard') }}" style="font-size: 18px; color: #007bff; text-decoration: none;">Dashboard</a>
+            <button type="button" onclick="toggleProductList()">+ Add Item</button>
+        </div>
+    
+        <form class="order-form" method="POST">
+            <label for="order_date">Order Date:</label>
+            <input type="date" id="order_date" name="order_date" required><br><br>
+        
+            <!-- Customer Select -->
+            <label for="customer_name">Customer Name:</label>
+            <select id="customer_name" name="customer_name" required onchange="updatePhone()">
+                <option value="">-- Select Customer --</option>
+                <option value="add_new">➕ Add Customer</option>
+                {% for customer in customers %}
+                    <option value="{{ customer['name'] }}" data-phone="{{ customer['contact'] }}">{{ customer['name'] }}</option>
+                {% endfor %}
+            </select><br><br>
+        
+            <!-- Auto-filled phone -->
+            <label for="customer_phone">Customer Phone:</label>
+            <input type="text" id="customer_phone" name="customer_phone" required readonly><br><br>
+        
+            <label for="payment_method">Payment Method:</label>
+            <select id="payment_method" name="payment_method" required>
+                <option value="">-- Select Payment Method --</option>
+                <option value="Mpesa">Mpesa</option>
+                <option value="Bank Transaction">Bank Transaction</option>
+                <option value="Cash">Cash</option>
+                <option value="Other">Other</option>
+            </select><br><br>
+        
+            <!-- Items Table -->
+            <table class="order-table" id="order-items">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Item Name</th>
+                        <th>Price</th>
+                        <th>Quantity</th>
+                        <th>Total</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- rows -->
+                </tbody>
+            </table>
+        
+            <!-- Order Summary -->
+            <div class="order-summary">
+                <table class="order-table">
+                    <tr>
+                        <td><strong>Total:</strong> Kshs <span id="total-price">0.00</span></td>
+                    </tr>
+                    <tr>
+                        <td><input type="number" id="discount" name="discount" placeholder="Discount" onchange="updateTotalPayable()"></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Total Payable:</strong> Kshs <span id="total-payable">0.00</span></td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <label><input type="radio" name="payment_status" value="Paid"> Paid</label>
+                            <label><input type="radio" name="payment_status" value="Unpaid"> Unpaid</label>
+                        </td>
+                    </tr>                    
+                </table>
+            </div>
+        
+            <br>
+            <button type="submit" class="btn">Submit Order</button>
+        </form>
+
+        <!-- Product list -->
+        <ul id="product-list">
+            <!-- Product list items  -->
+        </ul>
+    </div>
+    
+    <script>
+        let itemCount = 1;
+        let availableStock = {};
+
+        // Fetch current stock
+        fetch("{{ url_for('orders.get_available_stock') }}")
+            .then(response => response.json())
+            .then(data => {
+                availableStock = data;
+            });
+
+        // Hook into form submission
+        document.querySelector('.order-form').addEventListener('submit', function(event) {
+            const rows = document.querySelectorAll('#order-items tbody tr');
+            let errorMessages = [];
+
+            rows.forEach(row => {
+                const name = row.querySelector('input[name$="[name]"]').value;
+                const quantity = parseInt(row.querySelector('input[name$="[quantity]"]').value);
+
+                const available = availableStock[name] || 0;
+                if (quantity > available) {
+                    errorMessages.push(`Not enough stock for "${name}". Ordered: ${quantity}, Available: ${available}`);
+                }
+            });
+
+            if (errorMessages.length > 0) {
+                event.preventDefault();
+                alert(errorMessages.join("\n"));
+            }
+        });
+
+        // Fetch unique products and add product list
+        fetch("{{ url_for('manage_stocks.get_products') }}")
+        .then(response => response.json())
+        .then(products => {
+            const productList = document.getElementById('product-list');
+            products.forEach(product => {
+                const li = document.createElement('li');
+                li.textContent = `${product[0]} - Kshs ${product[1]}`;
+                li.onclick = () => addItemRow(product[0], product[1]);
+                productList.appendChild(li);
+            });
+        });
+
+        function toggleProductList() {
+            const productList = document.getElementById('product-list');
+            productList.style.display = productList.style.display === 'block' ? 'none' : 'block';
+        }
+    
+        function addItemRow(productName, price) {
+            const tableBody = document.querySelector('#order-items tbody');
+            const row = document.createElement('tr');
+    
+            row.innerHTML = ` 
+                <td>${itemCount}</td>
+                <td><input type="text" name="items[${itemCount}][name]" value="${productName}" readonly></td>
+                <td><input type="number" name="items[${itemCount}][price]" value="${price}" readonly></td>
+                <td><input type="number" name="items[${itemCount}][quantity]" value="1" required onchange="updateTotal(${itemCount})"></td>
+                <td><span class="total">${price}</span></td>
+                <td><span class="delete-icon" onclick="deleteItemRow(this)">X</span></td>
+            `;
+            tableBody.appendChild(row);
+            itemCount++;
+            toggleProductList();
+            updateTotalPrice();
+        }
+    
+        function updateTotal(rowId) {
+            const row = document.querySelector(`#order-items tbody tr:nth-child(${rowId})`);
+            const price = parseFloat(row.querySelector(`input[name="items[${rowId}][price]"]`).value);
+            const quantity = parseInt(row.querySelector(`input[name="items[${rowId}][quantity]"]`).value);
+            const total = price * quantity;
+            row.querySelector('.total').textContent = total.toFixed(2);
+            updateTotalPrice();
+        }
+
+        function updateTotalPrice() {
+            let total = 0;
+            const rows = document.querySelectorAll('#order-items tbody tr');
+            rows.forEach(row => {
+                const rowTotal = parseFloat(row.querySelector('.total').textContent);
+                total += rowTotal;
+            });
+            document.getElementById('total-price').textContent = total.toFixed(2);
+            updateTotalPayable();
+        }
+
+        function updateTotalPayable() {
+            const total = parseFloat(document.getElementById('total-price').textContent);
+            const discount = parseFloat(document.getElementById('discount').value) || 0;
+            const totalPayable = total - discount;
+            document.getElementById('total-payable').textContent = totalPayable.toFixed(2);
+        }
+
+        function deleteItemRow(deleteButton) {
+            const row = deleteButton.closest('tr');
+            row.remove();
+            itemCount--;
+            updateTotalPrice();
+        }
+
+        function updatePhone() {
+            const select = document.getElementById('customer_name');
+            const phoneInput = document.getElementById('customer_phone');
+            const selectedOption = select.options[select.selectedIndex];
+    
+            if (select.value === "add_new") {
+                window.location.href = "{{ url_for('customers.customers_page') }}";
+            } else {
+                const phone = selectedOption.getAttribute('data-phone');
+                phoneInput.value = phone || '';
+            }
+        }
+    </script>
+</body>
+</html>

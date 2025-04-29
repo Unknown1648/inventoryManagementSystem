@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Product Quantity for Confirmed Suppliers</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #063f29;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color:#F5F5F5;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            text-align: center;
+            color: #343a40;
+            margin-bottom: 30px;
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .table thead {
+            background-color: #343a40;
+            color: #ffffff;
+        }
+
+        .table th,
+        .table td {
+            text-align: left;
+            padding: 12px 10px;
+            border: 1px solid #dee2e6;
+        }
+
+        .table tbody tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+
+        .table tbody tr:hover {
+            background-color: #e9ecef;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mt-5">Product Quantity for Confirmed Suppliers</h1>
+        <a href="{{ url_for('dashboard') }}">Dashboard</a>
+
+        <!-- products and quantities -->
+        <table class="table table-bordered mt-4" id="productTable">
+            <thead>
+                <tr>
+                    <th>Product Name</th>
+                    <th>Total Initial Quantity</th>
+                    <th>Current Quantity</th>
+                </tr>
+            </thead>
+            
+            <tbody>
+                <!-- Data  -->
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            // Fetch all products and their quantities when the page loads
+            $.ajax({
+                url: '/stocks/count_all_product_quantities',
+                type: 'GET',
+                success: function(response) {
+                    // Clear the existing table data
+                    $('#productTable tbody').empty();
+
+                    // Check if there are products returned
+                    if (response.length === 0) {
+                        $('#productTable tbody').append('<tr><td colspan="2" class="text-center">No products found.</td></tr>');
+                    } else {
+                        // Populate the table with product data
+                        response.forEach(function(product) {
+                            $('#productTable tbody').append(
+                                `<tr>
+                                    <td>${product.product_name}</td>
+                                    <td>${product.initial_quantity}</td>
+                                    <td>${product.quantity}</td>
+                                </tr>`
+                            );
+                        });
+                    }
+                },
+                error: function() {
+                    // Display an error message if the request fails
+                    $('#productTable tbody').empty();
+                    $('#productTable tbody').append('<tr><td colspan="2" class="text-center">Error fetching product data. Please try again.</td></tr>');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

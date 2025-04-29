@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Revenue</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #063f29;
+            margin: 0;
+            padding: 0;
+        }
+
+        .revenue-container {
+            max-width: 1000px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color:#F5F5F5;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .revenue-container h1 {
+            text-align: center;
+            color: #343a40;
+            margin-bottom: 30px;
+        }
+
+        .revenue-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .revenue-table thead {
+            background-color: #343a40;
+            color: #ffffff;
+        }
+
+        .revenue-table th,
+        .revenue-table td {
+            text-align: left;
+            padding: 12px 10px;
+            border: 1px solid #dee2e6;
+        }
+
+        .revenue-table tbody tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+
+        .revenue-table tbody tr:hover {
+            background-color: #e9ecef;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="revenue-container">
+        <h1>Revenue Board</h1>
+        <a href="{{ url_for('dashboard') }}" style="font-size: 18px; color: #007bff; text-decoration: none;">Dashboard</a>
+
+        <!-- Table for revenue data -->
+        <table class="revenue-table">
+            <thead>
+                <tr>
+                    <th>Product Name</th>
+                    <th>Supplier Name</th>
+                    <th>Entered Date</th>
+                    <th>Purchasing Price</th>
+                    <th>Selling Price</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if revenue_data %}
+                    {% for row in revenue_data %}
+                    <tr onclick="window.location.href='{{ url_for('manage_stocks.revenue_detail', product_name=row['product_name'], supplier_name=row['supplier_name'], entered_date=row['entered_date']) }}'">
+                        <td>{{ row['product_name'] }}</td>
+                        <td>{{ row['supplier_name'] }}</td>
+                        <td>{{ row['entered_date'] }}</td>
+                        <td>{{ row['price'] }}</td>
+                        <td>{{ row['product_price'] }}</td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="4" style="text-align: center;">No revenue data available</td>
+                    </tr>
+                {% endif %}
+            </tbody>            
+        </table>
+    </div>
+</body>
+</html>

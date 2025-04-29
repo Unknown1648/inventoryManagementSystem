@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Revenue Detail</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #063f29;
+            margin: 0;
+            padding: 0;
+        }
+
+        .detail-container {
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 30px;
+            background-color:#F5F5F5;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+            font-size: 16px;
+        }
+
+        .detail-grid div {
+            padding: 10px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        .value {
+            color: #222;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-top: 30px;
+            text-decoration: none;
+            color: #007bff;
+            font-weight: 500;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .input-field {
+            padding: 5px;
+            margin-top: 5px;
+            width: 100%;
+            border: 1px solid #e0e0e0;
+            border-radius: 5px;
+        }
+
+        .submit-btn {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .submit-btn:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="detail-container">
+        <h1>Revenue Detail</h1>
+
+        <form method="POST">
+            <div class="detail-grid">
+                <div class="label">Product Name:</div>
+                <div class="value">{{ detail.product_name }}</div>
+
+                <div class="label">Supplier Name:</div>
+                <div class="value">{{ detail.supplier_name }}</div>
+
+                <div class="label">Entered Date:</div>
+                <div class="value">{{ detail.entered_date }}</div>
+
+                <div class="label">Price per Product:</div>
+                <div class="value">Ksh {{ detail.price }}</div>
+
+                <div class="label">Purchasing Cost:</div>
+                <div class="value">Ksh {{ detail.purchasing_cost }}</div>
+
+                <div class="label">Total Sales:</div>
+                <div class="value">Ksh {{ detail.total_sales }}</div>
+
+                <div class="label">Operational Cost:</div>
+                <input type="number" class="input-field" name="operational_cost" value="{{ detail.operational_cost }}" >
+
+                <div class="label">Debts:</div>
+                <input type="number" class="input-field" name="debts" value="{{ detail.debts }}">
+
+                <div class="label">
+                    {% if detail.total_revenue >= 0 %}
+                        Total Profit:
+                    {% else %}
+                        Total Loss:
+                    {% endif %}
+                </div>
+                <div class="value">
+                    Ksh {{ detail.total_revenue | abs }}
+                </div>
+                
+            </div>
+
+            <button type="submit" class="submit-btn">Update Revenue</button>
+        </form>
+
+        <a class="back-link" href="{{ url_for('manage_stocks.revenue') }}">← Back to Revenue Table</a>
+    </div>
+</body>
+</html>

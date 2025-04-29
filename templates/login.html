@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en" class="admin-login">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        /* Admin Page Styles */
+        .admin-login {
+            background-color: #053120;
+            color: #ffffff;
+        }
+
+        .admin-login .login-container {
+            background-color: #053120;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.4);
+            text-align: center;
+        }
+
+        .admin-login input[type="text"],
+        .admin-login input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            margin: 12px 0;
+            border: none;
+            border-radius: 5px;
+        }
+
+        .admin-login button {
+            padding: 10px 20px;
+            background-color: #4c8ef7;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+        }
+
+        .admin-login button:hover {
+            background-color: #3a6edc;
+        }
+
+        
+    </style>
+</head>
+<body>
+
+    <div class="login-container">
+        <h1>Admin Login</h1>
+        
+        {% if error %}
+            <div class="error-message">
+                <p>{{ error }}</p>
+            </div>
+        {% endif %}
+
+        <form method="POST">
+            <div class="form-group">
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required><br><br>
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required><br><br>
+            </div>
+
+            <button type="submit">Login</button>
+        </form>
+    </div>
+
+</body>
+</html>

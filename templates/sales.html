@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sales</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color:#F5F5F5;
+            margin: 0;
+            padding: 40px 20px;
+        }
+
+        h1 {
+            font-size: 28px;
+            color: #333;
+            text-align: center;
+        }
+
+        .dashboard-link {
+            font-size: 16px;
+            color: #007bff;
+            text-decoration: none;
+            display: block;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .btn-toggle {
+            padding: 10px 20px;
+            margin: 0 10px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            border-radius: 5px;
+            transition: background-color 0.3s ease;
+        }
+
+        .btn-toggle.active {
+            background-color: #2ecc71;
+        }
+
+        .btn-toggle:hover {
+            background-color:rgb(35, 68, 5);
+        }
+
+        .sales-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .sales-table th, .sales-table td {
+            padding: 12px;
+            border: 1px solid #ccc;
+            text-align: center;
+        }
+
+        .sales-table th {
+            background-color: #f4f4f4;
+            font-weight: bold;
+        }
+
+        .sales-section {
+            display: none;
+        }
+
+        .sales-section.active {
+            display: block;
+        }
+
+        .sales-section h2 {
+            text-align: center;
+            color: #333;
+        }
+
+        .sales-section p {
+            text-align: center;
+            color: #555;
+        }
+
+        .empty-sales {
+            text-align: center;
+            font-size: 18px;
+            color: #888;
+        }
+
+        @media (max-width: 600px) {
+            .sales-table th, .sales-table td {
+                font-size: 14px;
+            }
+
+            .btn-toggle {
+                font-size: 14px;
+                padding: 8px 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Sales Overview</h1>
+    <a href="{{ url_for('dashboard') }}" class="dashboard-link">Go Back to Dashboard</a>
+
+    <div class="button-container" style="text-align: center; margin-bottom: 30px;">
+        <button class="btn-toggle active" onclick="toggleSection('pending')">Pending Sales</button>
+        <button class="btn-toggle" onclick="toggleSection('completed')">Completed Sales</button>
+    </div>
+
+    <!-- Pending Sales -->
+    <div id="pending" class="sales-section active">
+        <h2>Pending Sales</h2>
+        {% if pending_orders %}
+        <table class="sales-table">
+            <thead>
+                <tr>
+                    <th>Product Name</th>
+                    <th>Payment Method</th>
+                    <th>Customer Name</th>
+                    <th>Amount</th>
+                    <th>Order Number</th>
+                    <th>Date Sold</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for order in pending_orders %}
+                    {% for item in order["items"] %}
+                        <tr>
+                            <td>{{ item.name }}</td>
+                            <td>{{ order.payment_method or 'N/A' }}</td>
+                            <td>{{ order.customer_name }}</td>
+                            <td>{{ item.price * item.quantity }}</td>
+                            <td>{{ order.order_number }}</td>
+                            <td>{{ order.order_date }}</td>
+                        </tr>
+                    {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="empty-sales">No Pending Sales</p>
+        {% endif %}
+    </div>
+
+    <!-- Completed Sales -->
+    <div id="completed" class="sales-section">
+        <h2>Completed Sales</h2>
+        {% if completed_orders %}
+        <table class="sales-table">
+            <thead>
+                <tr>
+                    <th>Product Name</th>
+                    <th>Payment Method</th>
+                    <th>Customer Name</th>
+                    <th>Amount</th>
+                    <th>Order Number</th>
+                    <th>Date Sold</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for order in completed_orders %}
+                    {% for item in order["items"] %}
+                        <tr>
+                            <td>{{ item.name }}</td>
+                            <td>{{ order.payment_method or 'N/A' }}</td>
+                            <td>{{ order.customer_name }}</td>
+                            <td>{{ item.price * item.quantity }}</td>
+                            <td>{{ order.order_number }}</td>
+                            <td>{{ order.order_date }}</td>
+                        </tr>
+                    {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="empty-sales">No Completed Sales</p>
+        {% endif %}
+    </div>
+
+    <script>
+        function toggleSection(sectionId) {
+            document.querySelectorAll('.sales-section').forEach(div => div.classList.remove('active'));
+            document.querySelectorAll('.btn-toggle').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(sectionId).classList.add('active');
+            event.target.classList.add('active');
+        }
+    </script>
+</body>
+</html>
