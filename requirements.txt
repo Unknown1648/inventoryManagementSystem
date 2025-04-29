@@ -2,7 +2,7 @@ Flask==2.0.2
 apscheduler==3.8.1
 pandas==1.5.3
 prophet==1.1.6
-numpy==1.21.0 --only-binary :all:
+numpy==1.23.5
 scipy==1.7.3
 pystan==2.19.1.1
 matplotlib==3.4.3
