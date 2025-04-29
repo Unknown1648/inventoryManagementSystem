@@ -3,8 +3,9 @@ apscheduler==3.8.1
 pandas==1.5.3
 prophet==1.1.6
 numpy==1.24.0
-scipy==1.9.0
+scipy==1.9.1  # or try scipy==1.10.0
 pystan==2.19.1.1
 matplotlib==3.4.3
 scikit-learn==0.24.2
 gunicorn==20.1.0
+pip>=23.0  # Make sure pip is updated
