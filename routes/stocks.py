@@ -87,7 +87,7 @@ def get_all_suppliers():
 def manage_stocks_page():
     if request.method == 'POST':
         product_name = request.form['product_name']
-        product_serial_no = request.form['product_serial_no']
+        product_serial_no = request.form.get('product_serial_no') or "N/A"
         stock_data = request.form['stock_data']
         product_price = float(request.form['product_price'])
         expiry_date = request.form['expiry_date']
