@@ -1,40 +1,35 @@
-import sqlite3
 import pandas as pd
 from prophet import Prophet
-from datetime import datetime
-from routes.database import DB_NAME
+from datetime import datetime, timedelta
+from routes.database import get_db_engine
+from sqlalchemy import text
 
 def get_combined_sales_data():
-    # Combine data from both sales_order_items and order_items tables
-    conn = sqlite3.connect(DB_NAME)
+    engine = get_db_engine()
 
-    # Get sales data from the sales_order_items table
+    # Get sales data from sales_order_items
     sales_order_items_query = '''
         SELECT order_date, product_name, quantity
         FROM sales_order_items
     '''
-    sales_order_items_df = pd.read_sql_query(sales_order_items_query, conn)
+    sales_order_items_df = pd.read_sql_query(sales_order_items_query, engine)
 
-    # Get sales data from the order_items table
+    # Get sales data from order_items
     order_items_query = '''
-        SELECT product_name, quantity
+        SELECT CURRENT_DATE AS order_date, product_name, quantity
         FROM order_items
     '''
-    order_items_df = pd.read_sql_query(order_items_query, conn)
+    order_items_df = pd.read_sql_query(order_items_query, engine)
 
-    conn.close()
-
-    # Combine both sales dataframes
+    # Combine
     df = pd.concat([sales_order_items_df, order_items_df], ignore_index=True)
 
-    # Format and aggregate data
     df['order_date'] = pd.to_datetime(df['order_date'])
     df = df.groupby(['order_date', 'product_name'])['quantity'].sum().reset_index()
 
     return df
 
 def forecast_sales(product_name, periods=7):
-    # Use the combined sales data instead of just the sales_order_items
     df = get_combined_sales_data()
     df = df[df['product_name'] == product_name]
 
@@ -53,41 +48,44 @@ def forecast_sales(product_name, periods=7):
 
     return forecast[['ds', 'yhat']].tail(periods).round(0).to_dict(orient='records')
 
-
 def get_combined_inventory_data():
-    # Combine data from both the suppliers table and the product_quantity_changes table
-    conn = sqlite3.connect(DB_NAME)
+    engine = get_db_engine()
 
-    # Get supplier-related inventory changes
+    # Supplier inventory increases
     supplier_query = '''
-        SELECT entered_date AS change_date, products , quantity, 'Increase' AS change_type
+        SELECT entered_date AS change_date, products AS product_name, quantity, 'Increase' AS change_type
         FROM suppliers
     '''
-    supplier_df = pd.read_sql_query(supplier_query, conn)
+    supplier_df = pd.read_sql_query(supplier_query, engine)
 
-    # Get quantity change data from the product_quantity_changes table
+    # Quantity changes
     quantity_changes_query = '''
         SELECT change_date, product_name, quantity_changed, change_type
         FROM product_quantity_changes
     '''
-    quantity_changes_df = pd.read_sql_query(quantity_changes_query, conn)
+    quantity_changes_df = pd.read_sql_query(quantity_changes_query, engine)
 
-    conn.close()
+    supplier_df = supplier_df.rename(columns={'quantity': 'net_change'})
+    supplier_df['net_change'] = supplier_df['net_change'].fillna(0)
 
-    # Combine both dataframes
-    df = pd.concat([supplier_df, quantity_changes_df], ignore_index=True)
-
-    # Process the data (add net_change column, aggregate, etc.)
-    df['change_date'] = pd.to_datetime(df['change_date'])
-    df['net_change'] = df.apply(
-        lambda row: row['quantity'] if row['change_type'] == 'Increase' else row['quantity_changed'] if row['change_type'] == 'Increase' else -row['quantity_changed'],
+    quantity_changes_df['net_change'] = quantity_changes_df.apply(
+        lambda row: row['quantity_changed'] if row['change_type'] == 'Increase' else -row['quantity_changed'],
         axis=1
     )
+
+    quantity_changes_df = quantity_changes_df[['change_date', 'product_name', 'net_change']]
+
+    supplier_df = supplier_df[['change_date', 'product_name', 'net_change']]
+
+    # Combine
+    df = pd.concat([supplier_df, quantity_changes_df], ignore_index=True)
+    df['change_date'] = pd.to_datetime(df['change_date'])
+
     df = df.groupby(['change_date', 'product_name'])['net_change'].sum().reset_index()
+
     return df
 
 def forecast_inventory(product_name, periods=7):
-    # Use the combined inventory data instead of just the product_quantity_changes
     df = get_combined_inventory_data()
     df = df[df['product_name'] == product_name]
 
@@ -106,44 +104,49 @@ def forecast_inventory(product_name, periods=7):
 
     return forecast[['ds', 'yhat']].tail(periods).round(0).to_dict(orient='records')
 
-
 def notification_exists(title, message, status):
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
+    engine = get_db_engine()
+    with engine.connect() as conn:
+        query = text("""
             SELECT COUNT(*) FROM notifications 
-            WHERE title = ? AND message = ? AND status = ?
-        ''', (title, message, status))
-        return cursor.fetchone()[0] > 0
+            WHERE title = :title AND message = :message AND status = :status
+        """)
+        result = conn.execute(query, {
+            "title": title,
+            "message": message,
+            "status": status
+        }).fetchone()
+        return result[0] > 0
 
 def insert_notification(title, message, status):
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
+    engine = get_db_engine()
+    with engine.connect() as conn:
+        query = text("""
             INSERT INTO notifications (title, message, status)
-            VALUES (?, ?, ?)
-        ''', (title, message, status))
-        conn.commit()
-        
-def check_and_notify_all(sales_threshold=100, inventory_threshold=100):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+            VALUES (:title, :message, :status)
+        """)
+        conn.execute(query, {
+            "title": title,
+            "message": message,
+            "status": status
+        })
 
-    # Get all unique product names from both sales and inventory tables
-    cursor.execute("""
-        SELECT DISTINCT product_name FROM sales_order_items
-        UNION
-        SELECT DISTINCT product_name FROM order_items
-        UNION
-        SELECT DISTINCT product_name FROM product_quantity_changes
-        UNION
-        SELECT DISTINCT products AS product_name FROM suppliers
-    """)
-    products = [row[0] for row in cursor.fetchall()]
-    conn.close()
+def check_and_notify_all(sales_threshold=100, inventory_threshold=100):
+    engine = get_db_engine()
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT DISTINCT product_name FROM sales_order_items
+            UNION
+            SELECT DISTINCT product_name FROM order_items
+            UNION
+            SELECT DISTINCT product_name FROM product_quantity_changes
+            UNION
+            SELECT DISTINCT products AS product_name FROM suppliers
+        """))
+        products = [row[0] for row in result.fetchall()]
 
     for product in products:
-        # === Sales Forecast Check ===
+        # sales forecast
         forecasted_sales = forecast_sales(product)
         if forecasted_sales:
             min_sales = min([day['yhat'] for day in forecasted_sales])
@@ -154,7 +157,7 @@ def check_and_notify_all(sales_threshold=100, inventory_threshold=100):
                 if not notification_exists(title, message, status):
                     insert_notification(title, message, status)
 
-        # === Inventory Forecast Check ===
+        # inventory
         forecasted_inventory = forecast_inventory(product)
         if forecasted_inventory:
             min_inventory = min([day['yhat'] for day in forecasted_inventory])

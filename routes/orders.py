@@ -1,66 +1,71 @@
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
-from routes.database import *
+from routes.database import get_db_connection
 import datetime
 import random
 
 orders_blueprint = Blueprint('orders', __name__)
 
-
 @orders_blueprint.route('/get_available_stock')
 def get_available_stock():
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT products, SUM(quantity) as total_quantity
-            FROM suppliers
-            WHERE status = "Confirmed"
-            GROUP BY products
-        ''')
-        stock = {row[0]: row[1] for row in cursor.fetchall()}
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT products, SUM(quantity) as total_quantity
+        FROM suppliers
+        WHERE status = 'Confirmed'
+        GROUP BY products
+    ''')
+    stock = {row[0]: row[1] for row in cursor.fetchall()}
+    conn.close()
     return jsonify(stock)
 
 def add_order(order_number, customer_name, customer_phone, payment_method, status, total_price, items):
     order_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-        # Insert into the orders table
-        cursor.execute(''' 
-            INSERT INTO orders (order_number, order_date, customer_name, customer_phone, payment_method, status, total_price)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (order_number, order_date, customer_name, customer_phone, payment_method, status, total_price))
+    # Insert into the orders table and get the order_id using RETURNING
+    cursor.execute(''' 
+        INSERT INTO orders (order_number, order_date, customer_name, customer_phone, payment_method, status, total_price)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING order_id;
+    ''', (order_number, order_date, customer_name, customer_phone, payment_method, status, total_price))
 
-        order_id = cursor.lastrowid
+    # Fetch the generated order_id from the INSERT statement
+    order_id = cursor.fetchone()[0]
 
-        # Insert into the order_items table
-        for item in items:
-            cursor.execute('''
-                INSERT INTO order_items (order_id, product_name, product_price, quantity)
-                VALUES (?, ?, ?, ?)
-            ''', (order_id, item['product_name'], item['product_price'], item['quantity']))
-
-        # If order is completed, save it to the sales table
-        if status == 'Completed':
-            save_order_to_sales(cursor, order_number, order_date, customer_name, customer_phone, payment_method, total_price, items)
-
-        # Commit the changes to the database
-        conn.commit()
-
-def save_order_to_sales(cursor, order_number, order_date, customer_name, customer_phone, payment_method, total_price, items):
-    cursor.execute('''
-        INSERT INTO sales (order_number, order_date, customer_name, customer_phone, payment_method, status, total_price)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (order_number, order_date, customer_name, customer_phone, payment_method, 'Completed', total_price))
-
-    sales_order_id = cursor.lastrowid
-
-    # Insert into sales_order_items and subtract product quantity
+    # Insert into the order_items table
     for item in items:
         cursor.execute('''
+            INSERT INTO order_items (order_id, product_name, product_price, quantity)
+            VALUES (%s, %s, %s, %s)
+        ''', (order_id, item['product_name'], item['product_price'], item['quantity']))
+
+    # If order is completed, save it to the sales table
+    if status == 'Completed':
+        save_order_to_sales(cursor, order_number, order_date, customer_name, customer_phone, payment_method, total_price, items)
+
+    # Commit the changes to the database
+    conn.commit()
+
+def save_order_to_sales(cursor, order_number, order_date, customer_name, customer_phone, payment_method, total_price, items):
+    # Insert into the sales table and get the sales_order_id using RETURNING
+    cursor.execute(''' 
+        INSERT INTO sales (order_number, order_date, customer_name, customer_phone, payment_method, status, total_price)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING order_id;  -- Assuming the primary key is order_id
+    ''', (order_number, order_date, customer_name, customer_phone, payment_method, 'Completed', total_price))
+
+    # Fetch the generated sales_order_id from the INSERT statement
+    order_id = cursor.fetchone()[0]
+
+    # Insert into sales_order_items table
+    for item in items:
+        cursor.execute(''' 
             INSERT INTO sales_order_items (order_id, product_name, product_price, quantity, order_date)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (sales_order_id, item['product_name'], item['product_price'], item['quantity'], order_date))
+            VALUES (%s, %s, %s, %s, %s)
+        ''', (order_id, item['product_name'], item['product_price'], item['quantity'], order_date))
 
         # Subtract product quantity from suppliers
         subtract_product_quantity(cursor, item['product_name'], item['quantity'])
@@ -69,7 +74,7 @@ def subtract_product_quantity(cursor, product_name, quantity_sold):
     # Step 1: Fetch all confirmed suppliers for this product
     cursor.execute(''' 
         SELECT id, quantity FROM suppliers
-        WHERE products = ? AND status = "Confirmed"
+        WHERE products = %s AND status = 'Confirmed'
         ORDER BY id ASC
     ''', (product_name,))
     rows = cursor.fetchall()
@@ -84,27 +89,26 @@ def subtract_product_quantity(cursor, product_name, quantity_sold):
         if current_quantity >= remaining:
             # Supplier has enough to cover the rest
             new_quantity = current_quantity - remaining
-            cursor.execute('UPDATE suppliers SET quantity = ? WHERE id = ?', (new_quantity, supplier_id))
+            cursor.execute('UPDATE suppliers SET quantity = %s WHERE id = %s', (new_quantity, supplier_id))
             remaining = 0
         else:
             # Not enough, zero this one out and continue
-            cursor.execute('UPDATE suppliers SET quantity = 0 WHERE id = ?', (supplier_id,))
+            cursor.execute('UPDATE suppliers SET quantity = 0 WHERE id = %s', (supplier_id,))
             remaining -= current_quantity
 
     # Step 3: Calculate total remaining quantity across all confirmed suppliers
     cursor.execute('''
         SELECT SUM(quantity) FROM suppliers
-        WHERE products = ? AND status = "Confirmed"
+        WHERE products = %s AND status = 'Confirmed'
     ''', (product_name,))
     total_remaining = cursor.fetchone()[0] or 0
 
     # Step 4: Record a single, accurate quantity change
     record_quantity_change(cursor, product_name, total_remaining)
 
-# Record the quantity change in product_quantity_changes and update snapshot
 def record_quantity_change(cursor, product_name, new_quantity):
     # Fetch the current quantity from the snapshot table
-    cursor.execute('SELECT last_quantity FROM product_quantity_snapshot WHERE product_name = ?', (product_name,))
+    cursor.execute('SELECT last_quantity FROM product_quantity_snapshot WHERE product_name = %s', (product_name,))
     result = cursor.fetchone()
 
     if result is None:
@@ -127,52 +131,55 @@ def record_quantity_change(cursor, product_name, new_quantity):
     change_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     # Insert the change into the product_quantity_changes table
-    cursor.execute('''
+    cursor.execute(''' 
         INSERT INTO product_quantity_changes (product_name, change_type, quantity_changed, change_date)
-        VALUES (?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s)
     ''', (product_name, change_type, quantity_changed, change_date))
 
     # Update the product's snapshot in the product_quantity_snapshot table
     cursor.execute('''
-        INSERT OR REPLACE INTO product_quantity_snapshot (product_name, last_quantity)
-        VALUES (?, ?)
+        INSERT INTO product_quantity_snapshot (product_name, last_quantity)
+        VALUES (%s, %s)
+        ON CONFLICT (product_name)  -- Conflict on product_name
+        DO UPDATE SET last_quantity = EXCLUDED.last_quantity;  -- Update with the new quantity
     ''', (product_name, new_quantity))
+
 
 @orders_blueprint.route('/order_confirmation/<order_number>')
 def order_confirmation(order_number):
-    with sqlite3.connect(DB_NAME) as conn:
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM orders WHERE order_number = ?', (order_number,))
+        cursor.execute('SELECT * FROM orders WHERE order_number = %s', (order_number,))
         order = cursor.fetchone()
 
         if not order:
             return "Order not found", 404
 
-        cursor.execute('SELECT * FROM order_items WHERE order_id = ?', (order[0],))
+        cursor.execute('SELECT * FROM order_items WHERE order_id = %s', (order[0],))
         items = cursor.fetchall()
 
-    order_dict = {
-        'order_id': order[0],
-        'order_number': order[1],
-        'order_date': order[2],
-        'customer_name': order[3],
-        'customer_phone': order[4],
-        'payment_method': order[5],
-        'status': order[6],
-        'total_price': order[7],
-        'items': [{
-            'product_name': item[2],
-            'product_price': item[3],
-            'quantity': item[4]
-        } for item in items]
-    }
+        order_dict = {
+            'order_id': order[0],
+            'order_number': order[1],
+            'order_date': order[2],
+            'customer_name': order[3],
+            'customer_phone': order[4],
+            'payment_method': order[5],
+            'status': order[6],
+            'total_price': order[7],
+            'items': [{
+                'product_name': item[2],
+                'product_price': item[3],
+                'quantity': item[4]
+            } for item in items]
+        }
 
-    return render_template('order_confirmation.html', order=order_dict)
+        return render_template('order_confirmation.html', order=order_dict)
 
 def get_order_details(order_number):
-    with sqlite3.connect(DB_NAME) as conn:
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM orders WHERE order_number = ?', (order_number,))
+        cursor.execute('SELECT * FROM orders WHERE order_number = %s', (order_number,))
         order = cursor.fetchone()
 
         if not order:
@@ -189,7 +196,7 @@ def get_order_details(order_number):
             'items': []
         }
 
-        cursor.execute('SELECT * FROM order_items WHERE order_id = ?', (order[0],))
+        cursor.execute('SELECT * FROM order_items WHERE order_id = %s', (order[0],))
         items = cursor.fetchall()
 
         for item in items:
@@ -199,14 +206,14 @@ def get_order_details(order_number):
                 'quantity': item[4]
             })
 
-    return order_details
+        return order_details
 
 def delete_order(order_number):
-    with sqlite3.connect(DB_NAME) as conn:
+        conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Step 1: Get the order_id
-        cursor.execute('SELECT order_id FROM orders WHERE order_number = ?', (order_number,))
+        # get the order_id
+        cursor.execute('SELECT order_id FROM orders WHERE order_number = %s', (order_number,))
         order = cursor.fetchone()
 
         if not order:
@@ -214,23 +221,23 @@ def delete_order(order_number):
 
         order_id = order[0]
 
-        # Step 2: Fetch all items from the order
-        cursor.execute('SELECT product_name, quantity FROM order_items WHERE order_id = ?', (order_id,))
+        # fetch all items from that order
+        cursor.execute('SELECT product_name, quantity FROM order_items WHERE order_id = %s', (order_id,))
         items = cursor.fetchall()
 
-        # Step 3: Restore quantities to suppliers
+        # restore quantities to suppliers
         for product_name, quantity in items:
             restore_product_quantity(cursor, product_name, quantity)
 
-        # Step 4: Delete order and items
-        cursor.execute('DELETE FROM order_items WHERE order_id = ?', (order_id,))
-        cursor.execute('DELETE FROM orders WHERE order_number = ?', (order_number,))
+        # delete order and items
+        cursor.execute('DELETE FROM order_items WHERE order_id = %s', (order_id,))
+        cursor.execute('DELETE FROM orders WHERE order_number = %s', (order_number,))
 
 def restore_product_quantity(cursor, product_name, quantity_to_restore):
     # Get all confirmed suppliers for this product, in reverse order of deduction (newest last)
     cursor.execute('''
         SELECT id, quantity FROM suppliers
-        WHERE products = ? AND status = "Confirmed"
+        WHERE products = %s AND status = 'Confirmed'
         ORDER BY id DESC
     ''', (product_name,))
     rows = cursor.fetchall()
@@ -241,40 +248,40 @@ def restore_product_quantity(cursor, product_name, quantity_to_restore):
         if remaining <= 0:
             break
 
-        # Let's restore to suppliers, you can also add a cap if there's a max limit per supplier
+        # restore to suppliers
         new_quantity = current_quantity + remaining
-        cursor.execute('UPDATE suppliers SET quantity = ? WHERE id = ?', (new_quantity, supplier_id))
+        cursor.execute('UPDATE suppliers SET quantity = %s WHERE id = %s', (new_quantity, supplier_id))
         remaining = 0
 
-    # After restoring, recalculate the total stock and record the change
+    # After restoring, recalculate total stock and record change
     cursor.execute('''
         SELECT SUM(quantity) FROM suppliers
-        WHERE products = ? AND status = "Confirmed"
+        WHERE products = %s AND status = 'Confirmed'
     ''', (product_name,))
     total_quantity = cursor.fetchone()[0] or 0
 
     record_quantity_change(cursor, product_name, total_quantity)
 
 def update_order_status(order_number, new_status):
-    with sqlite3.connect(DB_NAME) as conn:
+        conn = get_db_connection()
         cursor = conn.cursor()
 
-        if new_status == "Completed":
+        if new_status == 'Completed':
             # Fetch order_id and items
-            cursor.execute('SELECT order_id FROM orders WHERE order_number = ?', (order_number,))
+            cursor.execute('SELECT order_id FROM orders WHERE order_number = %s', (order_number,))
             order = cursor.fetchone()
             if not order:
                 return "Order not found"
             order_id = order[0]
 
-            cursor.execute('SELECT product_name, quantity FROM order_items WHERE order_id = ?', (order_id,))
+            cursor.execute('SELECT product_name, quantity FROM order_items WHERE order_id = %s', (order_id,))
             items = cursor.fetchall()
 
             # Check stock availability
             for product_name, quantity in items:
                 cursor.execute('''
                     SELECT SUM(quantity) FROM suppliers
-                    WHERE products = ? AND status = "Confirmed"
+                    WHERE products = %s AND status = 'Confirmed'
                 ''', (product_name,))
                 total_stock = cursor.fetchone()[0] or 0
                 if quantity > total_stock:
@@ -284,33 +291,33 @@ def update_order_status(order_number, new_status):
             for product_name, quantity in items:
                 subtract_product_quantity(cursor, product_name, quantity)
 
-        # Finally update status
-        cursor.execute('UPDATE orders SET status = ? WHERE order_number = ?', (new_status, order_number))
+        # update status
+        cursor.execute('UPDATE orders SET status = %s WHERE order_number = %s', (new_status, order_number))
         conn.commit()
 
 def get_all_orders():
-    with sqlite3.connect(DB_NAME) as conn:
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM orders')
         orders = cursor.fetchall()
 
-    columns = ['order_id', 'order_number', 'order_date', 'customer_name', 'customer_phone', 'payment_method', 'status', 'total_price']
-    return [dict(zip(columns, row)) for row in orders]
+        columns = ['order_id', 'order_number', 'order_date', 'customer_name', 'customer_phone', 'payment_method', 'status', 'total_price']
+        return [dict(zip(columns, row)) for row in orders]
 
 @orders_blueprint.route('/view_orders')
 def view_orders():
     search_query = request.args.get('search', '').strip()
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        if search_query:
-            cursor.execute('''
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if search_query:
+        cursor.execute('''
                 SELECT * FROM orders
-                WHERE order_number LIKE ? OR customer_name LIKE ?
+                WHERE order_number LIKE %s OR customer_name LIKE %s
                 ORDER BY order_date DESC
             ''', (f'%{search_query}%', f'%{search_query}%'))
-        else:
-            cursor.execute('SELECT * FROM orders ORDER BY order_date DESC')
-        orders = cursor.fetchall()
+    else:
+        cursor.execute('SELECT * FROM orders ORDER BY order_date DESC')
+    orders = cursor.fetchall()
 
     columns = ['order_id', 'order_number', 'order_date', 'customer_name', 'customer_phone', 'payment_method', 'status', 'total_price']
     return render_template('view_orders.html', orders=[dict(zip(columns, row)) for row in orders])
@@ -336,12 +343,12 @@ def delete_order_route(order_number):
     return redirect(url_for('orders.view_orders'))
 
 def generate_unique_order_number():
-    with sqlite3.connect(DB_NAME) as conn:
+        conn = get_db_connection()
         cursor = conn.cursor()
         while True:
-            code = ''.join(random.choices('ABCDEFGHIJ0123456789', k=8))
+            code = ''.join(random.choices('ABCDEFGHIJKLMNOP0123456789', k=8))
             order_number = f"ORDER-{code}"
-            cursor.execute("SELECT 1 FROM orders WHERE order_number = ?", (order_number,))
+            cursor.execute("SELECT 1 FROM orders WHERE order_number = %s", (order_number,))
             if not cursor.fetchone():
                 return order_number
 
@@ -376,10 +383,12 @@ def manage_orders():
 
         return redirect(url_for('orders.order_confirmation', order_number=order_number))
 
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT name, contact FROM customers")
-        customers = [{'name': row[0], 'contact': row[1]} for row in cursor.fetchall()]
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, contact FROM customers")
+    customers = [{'name': row[0], 'contact': row[1]} for row in cursor.fetchall()]
+    conn.close()
 
     orders = get_all_orders()
     return render_template('create_order.html', orders=orders, customers=customers)
+

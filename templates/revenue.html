@@ -21,7 +21,7 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
 
-        .revenue-container h1 {
+        .revenue-container h1, p {
             text-align: center;
             color: #343a40;
             margin-bottom: 30px;
@@ -58,8 +58,20 @@
 <body>
     <div class="revenue-container">
         <h1>Revenue Board</h1>
+        <p>Click on a specific product to check its revenue debut.</p>
         <a href="{{ url_for('dashboard') }}" style="font-size: 18px; color: #007bff; text-decoration: none;">Dashboard</a>
 
+        <form method="get" action="{{ url_for('manage_stocks.revenue') }}" style="margin-bottom: 20px; text-align: center;">
+            <input type="text" name="query" placeholder="Search product, supplier, date or price"
+                   value="{{ request.args.get('query', '') }}"
+                   style="padding: 8px; width: 60%; max-width: 400px; border-radius: 4px; border: 1px solid #ccc;">
+            
+            <button type="submit" style="padding: 8px 12px; border: none; background-color: #007bff; color: white; border-radius: 4px;">Search</button>
+            {% if request.args.get('query') %}
+                <a href="{{ url_for('manage_stocks.revenue') }}" style="margin-left: 10px; padding: 8px 12px; background-color: #6c757d; color: white; text-decoration: none; border-radius: 4px;">Reset</a>
+            {% endif %}
+        </form>
+        
         <!-- Table for revenue data -->
         <table class="revenue-table">
             <thead>
@@ -89,6 +101,11 @@
                 {% endif %}
             </tbody>            
         </table>
+        {% if revenue_data %}
+            <div style="margin-top: 20px; text-align: right; font-size: 20px; font-weight: bold;">
+                Total Revenue (All Items without Debts and Operational Cost): Ksh.{{ summed_revenue }}
+            </div>
+        {% endif %}
     </div>
 </body>
 </html>

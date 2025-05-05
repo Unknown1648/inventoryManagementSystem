@@ -1,38 +1,36 @@
 from flask import Blueprint, render_template, request, redirect, url_for
-import sqlite3
-from routes.database import DB_NAME
+from routes.database import get_db_connection
 
 customers_blueprint = Blueprint('customers', __name__)
 
-# Helper function for DB connection
-def get_db_connection():
-    return sqlite3.connect(DB_NAME, timeout=10)
-
-# Fetch all customers
+# fetch all customers
 @customers_blueprint.route('/get_all_customers')
 def get_customers():
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM customers')
-        customers = cursor.fetchall()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM customers')
+    customers = cursor.fetchall()
+    conn.close()
     return customers
 
 # Add new customer
 def add_customer(name, contact, email, address, payment_method):
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO customers (name, contact, email, address, payment_method)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (name, contact, email, address, payment_method))
-        conn.commit()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO customers (name, contact, email, address, payment_method)
+        VALUES (%s, %s, %s, %s, %s)
+    ''', (name, contact, email, address, payment_method))
+    conn.commit()
+    conn.close()
 
-# Fetch customer data by ID
+# fetch customr data by ID
 def get_customer_by_id(customer_id):
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM customers WHERE customer_id = ?', (customer_id,))
-        customer = cursor.fetchone()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM customers WHERE customer_id = %s', (customer_id,))
+    customer = cursor.fetchone()
+    conn.close()
 
     if customer:
         return {
@@ -47,14 +45,15 @@ def get_customer_by_id(customer_id):
 
 # Update customer details
 def update_customer(customer_id, name, contact, email, address, payment_method):
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE customers
-            SET name = ?, contact = ?, email = ?, address = ?, payment_method = ?
-            WHERE customer_id = ?
-        ''', (name, contact, email, address, payment_method, customer_id))
-        conn.commit()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE customers
+        SET name = %s, contact = %s, email = %s, address = %s, payment_method = %s
+        WHERE customer_id = %s
+    ''', (name, contact, email, address, payment_method, customer_id))
+    conn.commit()
+    conn.close()
 
 @customers_blueprint.route('/edit_customer/<int:customer_id>', methods=['GET', 'POST'])
 def edit_customer(customer_id):
@@ -74,10 +73,11 @@ def edit_customer(customer_id):
 
 # Delete customer
 def delete_customer(customer_id):
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM customers WHERE customer_id = ?', (customer_id,))
-        conn.commit()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM customers WHERE customer_id = %s', (customer_id,))
+    conn.commit()
+    conn.close()
 
 # Router for managing customers
 @customers_blueprint.route('/', methods=['GET', 'POST'])

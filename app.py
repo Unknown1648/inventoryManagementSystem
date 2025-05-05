@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, request
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 from routes.stocks import *
 from routes.sales import *
 from routes.customers import *
@@ -10,13 +10,16 @@ from datetime import datetime, timedelta
 import os, atexit
 from apscheduler.schedulers.background import BackgroundScheduler
 from routes.ai_forecast import get_combined_sales_data, check_and_notify_all
+import psycopg2
+from psycopg2 import sql
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
 
+# Initialize PostgreSQL database
 initialize_inventory_db()
 
-# logins
+# Logins
 admin_username = "admin"
 admin_password = "helloMe"
 
@@ -38,23 +41,24 @@ def login():
 @app.route('/dashboard')
 def dashboard():
     if not session.get('logged_in'):
-        return redirect(url_for('login'))  # Redirect to login if user != logged in
+        return redirect(url_for('login'))  # Redirect to login if user is not logged in
 
-    # Fetch the count of urgents
-    conn = sqlite3.connect(DB_NAME)
+    # Fetch the count of urgents from PostgreSQL
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM notifications WHERE status = "Urgent"')
+    cursor.execute('SELECT COUNT(*) FROM notifications WHERE status = %s', ('Urgent',))
     urgent_count = cursor.fetchone()[0]
     conn.close()
 
     return render_template('dashboard.html', urgent_count=urgent_count)
+
 
 @app.route('/logout')
 def logout():
     session.pop('logged_in', None)
     return redirect(url_for('login'))
 
-#blueprints
+# Blueprints
 app.register_blueprint(manage_stocks, url_prefix='/stocks')  
 app.register_blueprint(sales_blueprint, url_prefix='/sales')
 app.register_blueprint(customers_blueprint, url_prefix='/customers')
@@ -63,9 +67,9 @@ app.register_blueprint(orders_blueprint, url_prefix='/orders')
 
 @app.route('/notifications')
 def notifications_page():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('UPDATE notifications SET status = "read" WHERE status = "unread"')
+    cursor.execute('UPDATE notifications SET status = %s WHERE status = %s', ("read", "unread"))
     conn.commit()
     cursor.execute('SELECT id, title, message, status, created_at FROM notifications ORDER BY created_at DESC')
     notifications = cursor.fetchall()
@@ -87,73 +91,85 @@ def combined_job():
     generate_weekly_notifications()
 
 if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-    # Scheduler for checking notifications, forecasts, etc.
+    # Scheduler to check notifications and forecasts.
     scheduler = BackgroundScheduler()
     scheduler.add_job(func=combined_job, trigger="interval", minutes=1)
     scheduler.start()
 
-    # start cloud backup scheduler (1 week)
+    # Start cloud backup scheduler (1 week)
     backup_scheduler = start_backup_scheduler(604800)
     backup_scheduler.start()
 
-    # shut down properly
+    # Shut down properly
     atexit.register(lambda: scheduler.shutdown())
     atexit.register(lambda: backup_scheduler.shutdown())
-
+    
 @app.route('/product_quantity_over_time', methods=['GET'])
 def product_quantity_over_time():
     product_filter = request.args.get('product_name')
+    offset = int(request.args.get('offset', 0))
 
-    end_date = datetime.today().date()
-    start_date = end_date - timedelta(days=6)
-    dates = [(start_date + timedelta(days=i)).isoformat() for i in range(7)]
+    end_time = datetime.now() - timedelta(hours=24 * offset)
+    start_time = end_time - timedelta(hours=24)
 
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
+    times = [(start_time + timedelta(hours=i)).strftime('%Y-%m-%d %H:00') for i in range(25)]
 
-        # fetch all changes for the product in the last 7 days
-        if product_filter:
-            cursor.execute(''' 
-                SELECT product_name, change_type, quantity_changed, DATE(change_date)
-                FROM product_quantity_changes
-                WHERE DATE(change_date) BETWEEN ? AND ? AND product_name = ?
-                ORDER BY change_date
-            ''', (start_date.isoformat(), end_date.isoformat(), product_filter))
-        else:
-            cursor.execute('''
-                SELECT product_name, change_type, quantity_changed, DATE(change_date)
-                FROM product_quantity_changes
-                WHERE DATE(change_date) BETWEEN ? AND ?
-                ORDER BY product_name, change_date
-            ''', (start_date.isoformat(), end_date.isoformat()))
-        
-        changes = cursor.fetchall()
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-    # organize changes
-    product_daily_changes = {}
+    # Fetch all distinct product names from the product_quantity_changes table
+    cursor.execute(''' 
+        SELECT DISTINCT product_name
+        FROM product_quantity_changes
+    ''')
+    all_products = [row[0] for row in cursor.fetchall()]
+
+    if product_filter:
+        cursor.execute(''' 
+            SELECT product_name, change_type, quantity_changed, change_date
+            FROM product_quantity_changes
+            WHERE change_date BETWEEN %s AND %s AND product_name = %s
+            ORDER BY change_date
+        ''', (start_time, end_time, product_filter))
+    else:
+        cursor.execute(''' 
+            SELECT product_name, change_type, quantity_changed, change_date
+            FROM product_quantity_changes
+            WHERE change_date BETWEEN %s AND %s
+            ORDER BY product_name, change_date
+        ''', (start_time, end_time))
+
+    changes = cursor.fetchall()
+    conn.close()
+
+    if not changes:
+        print("No data found for the specified time range.")
+        changes = [(product, 'Increase', 0, start_time) for product in all_products]
+
+    product_hourly_changes = {}
     for product, change_type, qty_changed, change_date in changes:
-        product_daily_changes.setdefault(product, {}).setdefault(change_date, 0)
+        hour_str = change_date.strftime('%Y-%m-%d %H:00')
+        product_hourly_changes.setdefault(product, {}).setdefault(hour_str, 0)
         if change_type == 'Increase':
-            product_daily_changes[product][change_date] += qty_changed
+            product_hourly_changes[product][hour_str] += qty_changed
         else:
-            product_daily_changes[product][change_date] -= qty_changed
+            product_hourly_changes[product][hour_str] -= qty_changed
 
     result = {}
 
-    for product in product_daily_changes:
-        daily_quantities = []
+    for product in product_hourly_changes:
+        hourly_quantities = []
         current_qty = 0
 
-        # initialize starting quantity on the first day of the timeframe
-        for day in dates:
-            daily_change = product_daily_changes[product].get(day, 0)
-            current_qty += daily_change
+        for hour in times:
+            hourly_change = product_hourly_changes[product].get(hour, 0)
+            current_qty += hourly_change
             current_qty = max(current_qty, 0)
-            daily_quantities.append(current_qty)
+            hourly_quantities.append(current_qty)
 
         result[product] = {
-            "dates": dates,
-            "quantities": daily_quantities
+            'dates': times,
+            'quantities': hourly_quantities
         }
 
     return jsonify(result)

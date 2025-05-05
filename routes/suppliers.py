@@ -1,12 +1,12 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
-from routes.database import *
-import sqlite3, datetime
+from routes.database import get_db_connection
+import datetime
 
 suppliers_blueprint = Blueprint('suppliers', __name__)
 
 def execute_db_query(query, params=(), fetch=False):
     """Utility function to execute a database query and handle connection and cursor management."""
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(query, params)
     if fetch:
@@ -17,10 +17,10 @@ def execute_db_query(query, params=(), fetch=False):
     conn.close()
     return result
 
-# Record the quantity change in product_quantity_changes and update snapshot
+# Record quantity change in product_quantity_changes and update snapshot
 def record_quantity_change(cursor, product_name, new_quantity):
     # Fetch the current quantity from the snapshot table
-    cursor.execute('SELECT last_quantity FROM product_quantity_snapshot WHERE product_name = ?', (product_name,))
+    cursor.execute('SELECT last_quantity FROM product_quantity_snapshot WHERE product_name = %s', (product_name,))
     result = cursor.fetchone()
 
     if result is None:
@@ -36,7 +36,6 @@ def record_quantity_change(cursor, product_name, new_quantity):
         change_type = 'Decrease'
         quantity_changed = old_quantity - new_quantity
     else:
-        # No change in quantity
         return
 
     # Get the current timestamp for the change date
@@ -45,46 +44,46 @@ def record_quantity_change(cursor, product_name, new_quantity):
     # Insert the change into the product_quantity_changes table
     cursor.execute('''
         INSERT INTO product_quantity_changes (product_name, change_type, quantity_changed, change_date)
-        VALUES (?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s)
     ''', (product_name, change_type, quantity_changed, change_date))
 
     # Update the product's snapshot in the product_quantity_snapshot table
     cursor.execute('''
-        INSERT OR REPLACE INTO product_quantity_snapshot (product_name, last_quantity)
-        VALUES (?, ?)
-    ''', (product_name, new_quantity))
+    INSERT INTO product_quantity_snapshot (product_name, last_quantity)
+    VALUES (%s, %s)
+    ON CONFLICT (product_name)
+    DO UPDATE SET last_quantity = EXCLUDED.last_quantity
+''', (product_name, new_quantity))
+
 
 # Add supplier
 def add_supplier(supplier_name, contact, products, initial_quantity, status, price_per_product, delivery_price, total_price):
-    # Step 1: Insert the new supplier into the suppliers table
+    # insert the new supplier into the suppliers table
     insert_query = '''
         INSERT INTO suppliers (
             supplier_name, contact, products, initial_quantity, quantity, entered_date, status,
             price_per_product, delivery_price, total_price
-        ) VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)
     '''
     params = (supplier_name, contact, products, initial_quantity, initial_quantity, status, price_per_product, delivery_price, total_price)
     execute_db_query(insert_query, params)
 
-    # Step 2: Calculate the total quantity for the product from all confirmed suppliers
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT SUM(quantity) FROM suppliers
-            WHERE products = ? AND status = "Confirmed"
-        ''', (products,))
-        total_quantity = cursor.fetchone()[0] or 0
+    #calculate total quantity for product from all confirmed suppliers
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-        # Step 3: Record the change in product quantity based on the total confirmed quantity
-        record_quantity_change(cursor, products, total_quantity)
-            
-            # Update the product snapshot with the new quantity
-        cursor.execute('''
-                INSERT OR REPLACE INTO product_quantity_snapshot (product_name, last_quantity)
-                VALUES (?, ?)
-            ''', (products, total_quantity))
+    cursor.execute('''
+        SELECT SUM(quantity) FROM suppliers
+        WHERE products = %s AND status = 'Confirmed'
+    ''', (products,))
+    total_quantity = cursor.fetchone()[0] or 0
+
+    # record change in product quantity based on total confirmed quantity
+    record_quantity_change(cursor, products, total_quantity)
     
+    conn.commit()
+    conn.close()
+
 def get_all_suppliers():
     query = 'SELECT * FROM suppliers'
     suppliers = execute_db_query(query, fetch=True)
@@ -102,32 +101,33 @@ def get_all_suppliers():
 # Delete supplier
 @suppliers_blueprint.route('/delete_supplier/<int:supplier_id>', methods=['POST'])
 def delete_supplier(supplier_id):
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-        # Step 1: Fetch supplier's product and quantity
-        cursor.execute('SELECT products, quantity FROM suppliers WHERE id = ?', (supplier_id,))
-        supplier = cursor.fetchone()
+    # fetch supplier's product and quantity
+    cursor.execute('SELECT products, quantity FROM suppliers WHERE id = %s', (supplier_id,))
+    supplier = cursor.fetchone()
 
-        if not supplier:
-            return redirect(url_for('suppliers.suppliers_management_page'))
+    if not supplier:
+        return redirect(url_for('suppliers.suppliers_management_page'))
 
-        product_name, supplier_quantity = supplier
+    product_name, supplier_quantity = supplier
 
-        # Step 2: Delete the supplier
-        cursor.execute('DELETE FROM suppliers WHERE id = ?', (supplier_id,))
+    # delete that supplier
+    cursor.execute('DELETE FROM suppliers WHERE id = %s', (supplier_id,))
 
-        # Step 3: Recalculate total quantity for the product
-        cursor.execute('''
-            SELECT SUM(quantity) FROM suppliers
-            WHERE products = ? AND status = "Confirmed"
-        ''', (product_name,))
-        total_remaining = cursor.fetchone()[0] or 0
+    # recalculate total quantity for the product
+    cursor.execute('''
+        SELECT SUM(quantity) FROM suppliers
+        WHERE products = %s AND status = 'Confirmed'
+    ''', (product_name,))
+    total_remaining = cursor.fetchone()[0] or 0
 
-        # Step 4: Record the inventory change
-        record_quantity_change(cursor, product_name, total_remaining)
+    # record inventory change
+    record_quantity_change(cursor, product_name, total_remaining)
 
-        conn.commit()
+    conn.commit()
+    conn.close()
 
     return redirect(url_for('suppliers.suppliers_management_page'))
 
@@ -136,44 +136,47 @@ def delete_supplier(supplier_id):
 def edit_status(supplier_id):
     new_status = request.form.get('new_status')
     if new_status:
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-            # get current status, quantity, and product
-            cursor.execute('SELECT status, quantity, products FROM suppliers WHERE id = ?', (supplier_id,))
-            supplier_data = cursor.fetchone()
+        # get current status, quantity, and product
+        cursor.execute('SELECT status, quantity, products FROM suppliers WHERE id = %s', (supplier_id,))
+        supplier_data = cursor.fetchone()
 
-            if supplier_data:
-                current_status, supplier_quantity, product_name = supplier_data
+        if supplier_data:
+            current_status, supplier_quantity, product_name = supplier_data
 
-                # if status change is Pending → Confirmed, check upcoming quantity
-                if current_status == "Pending" and new_status == "Confirmed":
-                    cursor.execute('SELECT SUM(quantity) FROM suppliers WHERE status = "Confirmed"')
-                    total_confirmed_quantity = cursor.fetchone()[0] or 0
-                    projected_total = total_confirmed_quantity + supplier_quantity
+            # if status change is Pending - Confirmed, check upcoming quantity
+            if current_status == "Pending" and new_status == "Confirmed":
+                cursor.execute('SELECT SUM(quantity) FROM suppliers WHERE status = "Confirmed"')
+                total_confirmed_quantity = cursor.fetchone()[0] or 0
+                projected_total = total_confirmed_quantity + supplier_quantity
 
-                    if projected_total > 10000:
-                        flash("⚠️ Cannot confirm supplier. Total quantity would exceed 10,000 units.", "error")
-                        return redirect(url_for('suppliers.suppliers_management_page'))
+                if projected_total > 10000:
+                    flash("⚠️ Cannot confirm supplier. Total quantity would exceed 10,000 units.", "error")
+                    conn.close()
+                    return redirect(url_for('suppliers.suppliers_management_page'))
 
-                # update status
-                cursor.execute('UPDATE suppliers SET status = ? WHERE id = ?', (new_status, supplier_id))
+            # update status
+            cursor.execute('UPDATE suppliers SET status = %s WHERE id = %s', (new_status, supplier_id))
 
-                # recalculate and update product quantity
-                cursor.execute('''
-                    SELECT SUM(quantity) FROM suppliers
-                    WHERE products = ? AND status = "Confirmed"
-                ''', (product_name,))
-                total_quantity = cursor.fetchone()[0] or 0
+            # recalculate and update product quantity
+            cursor.execute('''
+                SELECT SUM(quantity) FROM suppliers
+                WHERE products = %s AND status = 'Confirmed'
+            ''', (product_name,))
+            total_quantity = cursor.fetchone()[0] or 0
 
-                record_quantity_change(cursor, product_name, total_quantity)
+            record_quantity_change(cursor, product_name, total_quantity)
 
-                cursor.execute('''
-                    INSERT OR REPLACE INTO product_quantity_snapshot (product_name, last_quantity)
-                    VALUES (?, ?)
-                ''', (product_name, total_quantity))
+            cursor.execute('''
+                INSERT INTO product_quantity_snapshot (product_name, last_quantity)
+                VALUES (%s, %s)
+                ON CONFLICT (product_name) DO UPDATE SET last_quantity = %s
+            ''', (product_name, total_quantity, total_quantity))
 
-            conn.commit()
+        conn.commit()
+        conn.close()
 
     return redirect(url_for('suppliers.suppliers_management_page'))
 
@@ -203,9 +206,10 @@ def manage_suppliers():
     suppliers = get_all_suppliers()
 
     # calculate total confirmed quantity
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT SUM(quantity) FROM suppliers WHERE status = "Confirmed"')
-        total_confirmed_quantity = cursor.fetchone()[0] or 0
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT SUM(quantity) FROM suppliers WHERE status = \'Confirmed\'')
+    total_confirmed_quantity = cursor.fetchone()[0] or 0
+    conn.close()
 
     return render_template('suppliers.html', suppliers=suppliers, total_confirmed_quantity=total_confirmed_quantity)
